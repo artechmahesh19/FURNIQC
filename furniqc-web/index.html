@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>FurniQc - Furniture QC Inspection Web App</title>
+<link rel="stylesheet" href="css/style.css" />
+
+<!-- Google Identity Services (sign-in) + gapi client (Drive/Sheets calls) -->
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://apis.google.com/js/api.js"></script>
+
+<!-- pdf.js for reading the Job Card PDF on import -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";</script>
+
+<!-- jsPDF for generating the QC report PDF -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+</head>
+<body>
+<div id="app">
+
+  <!-- ============ TOP STATUS BAR ============ -->
+  <div class="top-status-bar">
+    <div class="status-indicator">
+      <span class="status-dot" id="network-status-dot"></span>
+      <span id="network-status-text">Online</span>
+    </div>
+    <div style="font-size:11px; color:var(--text-secondary);" id="sync-status-badge">
+      Sync Queue: <span id="sync-queue-count" style="font-weight:600; color:var(--accent);">0</span>
+    </div>
+  </div>
+
+  <!-- ============ HOME ============ -->
+  <section id="screen-home" class="screen active">
+    <div class="header">
+      <div class="header-left">
+        <h2>FurniQc</h2>
+      </div>
+      <span class="badge badge-drno" style="font-size:10px;">QC Dashboard</span>
+    </div>
+    <div style="padding:16px 18px;">
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
+        <div class="card">
+          <p style="font-size:24px; font-weight:700; margin:0; color:var(--ok-text);" id="home-completed">0</p>
+          <p style="font-size:12px; color:var(--text-secondary); margin:4px 0 0;">✅ Approved Inspections</p>
+        </div>
+        <div class="card">
+          <p style="font-size:24px; font-weight:700; margin:0; color:var(--rejected-text);" id="home-rejected">0</p>
+          <p style="font-size:12px; color:var(--text-secondary); margin:4px 0 0;">❌ Rejected Items</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <span style="font-size:13px; font-weight:600;">Overall QC Approval Rate</span>
+          <span style="font-size:13px; font-weight:700; color:var(--ok-text);" id="home-pct">0%</span>
+        </div>
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" id="home-progress-fill" style="width:0%; background:var(--ok-text);"></div>
+        </div>
+        <div id="home-dept-breakdown" style="display:grid; grid-template-columns:1fr 1fr; gap:6px; font-size:11px; color:var(--text-muted); margin-top:10px;"></div>
+      </div>
+
+      <button class="btn btn-primary" style="width:100%; margin-top:8px; height:46px; font-size:14px;" onclick="showScreen('newqc')">
+        + Start New QC Inspection
+      </button>
+
+      <div style="margin-top:16px;">
+        <p style="font-size:12px; color:var(--text-secondary); margin-bottom:8px; font-weight:600;">Recent QC Activity</p>
+        <div id="home-recent-activity"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ NEW QC (project setup / PDF import) ============ -->
+  <section id="screen-newqc" class="screen">
+    <div class="header">
+      <div class="header-left">
+        <button class="back-btn" onclick="showScreen('home')">←</button>
+        <h2>New QC Inspection</h2>
+      </div>
+    </div>
+    <div style="padding:16px 18px;">
+      <label class="field-label">QC Round Type</label>
+      <select id="new-qc-type">
+        <option value="Fresh QC">Fresh QC</option>
+        <option value="Re-QC">Re-QC (Re-inspection)</option>
+      </select>
+
+      <!-- Predefined Template Quick Selector -->
+      <div class="card" style="background:var(--surface-muted); border-color:var(--accent);">
+        <p style="font-size:13px; font-weight:600; margin:0 0 6px; color:var(--accent-text);">⚡ Quick Load Sample Job Cards</p>
+        <p style="font-size:11px; color:var(--text-secondary); margin:0 0 10px;">Select a demo Job Card template to test the inspection checklist immediately without uploading a PDF:</p>
+        <div style="display:flex; gap:8px;">
+          <select id="sample-template-select" style="margin-bottom:0; flex:1;">
+            <option value="bedroom">ART-201: The Palms Bedroom Suite</option>
+            <option value="office">ART-305: Apex Executive Office</option>
+            <option value="sofa">ART-410: Emerald Living Sofa</option>
+          </select>
+          <button class="btn btn-primary" id="load-sample-btn">Load</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <p style="font-size:13px; font-weight:600; margin:0 0 8px;">📄 Auto-Extract via Job Card PDF</p>
+        <p style="font-size:11px; color:var(--text-secondary); margin:0 0 12px;">Upload an Artech Job Card PDF. The system will parse the Order No, Project Name, and all Dr No items automatically.</p>
+        <label class="btn btn-secondary" style="width:100%; height:44px;">
+          📁 Choose PDF File
+          <input type="file" id="pdf-upload-input" accept="application/pdf" style="display:none;" />
+        </label>
+      </div>
+
+      <div class="card">
+        <p style="font-size:13px; font-weight:600; margin:0 0 10px;">✍️ Create Manually</p>
+        <label class="field-label">Art Number</label>
+        <input id="manual-art-no" placeholder="e.g. ART-90" />
+        <label class="field-label">Project Name</label>
+        <input id="manual-project-name" placeholder="e.g. The Bougain Villa" />
+        <label class="field-label">PO Number (Optional)</label>
+        <input id="manual-po-no" placeholder="e.g. PO-8812" />
+        <button class="btn btn-primary" style="width:100%;" id="manual-create-btn">Create Project & Start QC</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ INSPECTION (checklist / photos) ============ -->
+  <section id="screen-inspection" class="screen">
+    <div class="header">
+      <div class="header-left">
+        <button class="back-btn" id="back-to-home">←</button>
+        <div>
+          <h2 id="inspection-title">Inspection</h2>
+          <p class="subtitle" id="inspection-subtitle"></p>
+        </div>
+      </div>
+      <div style="display:flex; align-items:center; gap:6px;">
+        <button class="btn" id="inspection-score-btn" style="height:32px; padding:0 10px; font-size:11px; font-weight:700; border-radius:20px; background:#065f46; color:#6ee7b7; border:1.5px solid #10b981; cursor:pointer;" title="Click to view QC Score Breakdown">100% OK</button>
+        <button class="btn btn-secondary" id="add-custom-item-btn" style="height:32px; padding:0 8px; font-size:11px;">+ Item</button>
+      </div>
+    </div>
+    <div style="padding:16px 18px;">
+      <div id="live-inspection-score-box" style="margin-bottom:12px;"></div>
+      <div id="inspection-line-items"></div>
+
+      <div class="btn-row" style="margin-top:16px;">
+        <button class="btn btn-secondary" id="save-pdf-btn">⬇ Export PDF</button>
+        <button class="btn btn-primary" id="save-qc-btn">💾 Save QC Report</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ PHOTOS (gallery) ============ -->
+  <section id="screen-photos" class="screen">
+    <div class="header">
+      <div class="header-left">
+        <h2>📷 Photos Gallery</h2>
+      </div>
+    </div>
+    <div style="padding:16px 18px;">
+      <div style="display:flex; gap:8px; margin-bottom:12px;">
+        <select id="gallery-art-filter" style="margin-bottom:0; flex:1;">
+          <option value="ALL">All Art Numbers</option>
+        </select>
+        <select id="gallery-dept-filter" style="margin-bottom:0; flex:1;">
+          <option value="ALL">All Depts</option>
+          <option value="Panel">Panel</option>
+          <option value="Polish">Polish</option>
+          <option value="Solid">Solid</option>
+          <option value="Upholstery">Upholstery</option>
+        </select>
+      </div>
+
+      <div id="photo-gallery-container"></div>
+    </div>
+  </section>
+
+  <!-- ============ REPORTS ============ -->
+  <section id="screen-reports" class="screen">
+    <div class="header">
+      <div class="header-left">
+        <h2>📊 Reports & Analytics</h2>
+      </div>
+      <button class="btn btn-secondary" id="export-csv-btn" style="height:32px; padding:0 10px; font-size:11px;">📥 CSV Export</button>
+    </div>
+    <div style="padding:16px 18px;">
+      <!-- Department Breakdown Cards -->
+      <p style="font-size:12px; color:var(--text-secondary); margin:0 0 8px; font-weight:600;">Department Approval Stats</p>
+      <div id="dashboard-cards"></div>
+
+      <!-- Top Rejection Reasons Analytics -->
+      <div class="card" style="margin-top:12px;">
+        <p style="font-size:13px; font-weight:600; margin:0 0 8px;">⚠️ Top Rejection Reasons</p>
+        <div id="rejection-reasons-chart"></div>
+      </div>
+
+      <!-- QC Log Filter & List -->
+      <div style="display:flex; justify-content:space-between; align-items:center; margin:16px 0 8px;">
+        <p style="font-size:12px; color:var(--text-secondary); margin:0; font-weight:600;">QC Log Records (Grouped Art Wise)</p>
+      </div>
+      <input id="reports-search-input" placeholder="🔍 Search Art No, Dr No, or Project..." style="margin-bottom:12px;" />
+      <div id="qc-log-groups"></div>
+    </div>
+  </section>
+
+  <!-- ============ SETTINGS ============ -->
+  <section id="screen-settings" class="screen">
+    <div class="header">
+      <div class="header-left">
+        <h2>⚙ Settings & Sync</h2>
+      </div>
+    </div>
+    <div style="padding:16px 18px;">
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <p style="font-size:13px; font-weight:600; margin:0;">Inspector Profile</p>
+          <span class="badge" style="background:#1e3a8a; color:#93c5fd; font-size:10px;">🔒 Locked</span>
+        </div>
+        <label class="field-label">Inspector Name</label>
+        <input id="settings-inspector-name" value="Mahesh Solanki" readonly style="background:#1a1a22; border-color:#3b82f640; color:#f4f4f7;" />
+      </div>
+
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <p style="font-size:13px; font-weight:600; margin:0;">Google Cloud Sync (Drive & Sheets)</p>
+          <span class="badge" style="background:#064e3b; color:#34d399; font-size:11px;" id="cloud-sync-status-badge">● Connected</span>
+        </div>
+        <p style="font-size:11px; color:var(--text-secondary); margin:0 0 12px;">Direct cloud sync to Google Drive & Google Sheet is active via Apps Script backend. No Google sign-in needed on mobile or PC.</p>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btn-primary" style="flex:1; height:38px; font-size:12px;" id="test-connection-btn">⚡ Test Connection</button>
+          <button class="btn btn-secondary" style="flex:1; height:38px; font-size:12px;" onclick="window.open('https://docs.google.com/spreadsheets/d/1tYR0aFScB0bg--vmtQIhPlZTddNX8a1CUBWf7gsGZbU/edit', '_blank')">📊 Open Sheet</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <p style="font-size:13px; font-weight:600; margin:0 0 8px;">Offline Queue Manager</p>
+        <p style="font-size:11px; color:var(--text-secondary); margin:0 0 10px;" id="queue-status-text">Pending items in queue: 0</p>
+        <button class="btn btn-secondary" style="width:100%;" id="manual-sync-btn">🔄 Trigger Sync Now</button>
+      </div>
+
+      <div class="card" style="border-color:#7f1d1d;">
+        <p style="font-size:13px; font-weight:600; margin:0 0 8px; color:var(--rejected-text);">Clear Cache</p>
+        <p style="font-size:11px; color:var(--text-secondary); margin:0 0 10px;">Clear local browser offline storage cache.</p>
+        <button class="btn btn-danger" style="width:100%;" id="reset-sample-data-btn">🗑️ Clear Offline Data Cache</button>
+      </div>
+    </div>
+  </section>
+
+
+  <!-- ============ MODALS ============ -->
+
+  <!-- REJECTION DETAILS MODAL -->
+  <div class="modal-overlay" id="rejection-modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="rejection-modal-title">Rejection Reason</h3>
+        <button class="modal-close" onclick="closeRejectionModal()">✕</button>
+      </div>
+      <label class="field-label">Select Standard Rejection Reason</label>
+      <select id="modal-rejection-reason"></select>
+
+      <label class="field-label">Severity Level</label>
+      <div class="severity-grid">
+        <div class="severity-pill active" data-severity="Minor">Minor</div>
+        <div class="severity-pill" data-severity="Major">Major</div>
+        <div class="severity-pill" data-severity="Critical">Critical</div>
+      </div>
+
+      <label class="field-label">Specific Notes / Defect Details</label>
+      <textarea id="modal-rejection-notes" placeholder="Describe defect location or measurements..."></textarea>
+
+      <div class="btn-row" style="margin-top:12px;">
+        <button class="btn btn-secondary" onclick="closeRejectionModal()">Cancel</button>
+        <button class="btn btn-primary" id="confirm-rejection-btn">Confirm Rejection</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- LIGHTBOX PHOTO MODAL -->
+  <div class="modal-overlay" id="lightbox-modal">
+    <div class="modal-content lightbox-modal">
+      <div class="modal-header">
+        <h3 id="lightbox-title">Photo Preview</h3>
+        <button class="modal-close" onclick="closeLightbox()">✕</button>
+      </div>
+      <img id="lightbox-image" src="" alt="QC Photo" />
+      <p id="lightbox-details" style="font-size:12px; color:var(--text-secondary); margin:0 0 12px;"></p>
+      <div class="btn-row">
+        <button class="btn btn-secondary" id="lightbox-download-btn">⬇ Download</button>
+        <button class="btn btn-danger" id="lightbox-delete-btn">🗑 Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ADD CUSTOM DR ITEM MODAL -->
+  <div class="modal-overlay" id="add-item-modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Add Dr No Item</h3>
+        <button class="modal-close" onclick="closeAddItemModal()">✕</button>
+      </div>
+      <label class="field-label">Dr No</label>
+      <input id="custom-dr-no" placeholder="e.g. DR-409" />
+
+      <label class="field-label">Product Name</label>
+      <input id="custom-product-name" placeholder="e.g. Drawer Front Panel" />
+
+      <label class="field-label">Size (W x D x H)</label>
+      <input id="custom-size" placeholder="e.g. 600 x 400 x 180" />
+
+      <label class="field-label">Quantity</label>
+      <input id="custom-qty" type="number" value="1" min="1" />
+
+      <div class="btn-row" style="margin-top:12px;">
+        <button class="btn btn-secondary" onclick="closeAddItemModal()">Cancel</button>
+        <button class="btn btn-primary" id="confirm-add-item-btn">Add Item</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ BOTTOM NAV ============ -->
+  <nav class="bottom-nav">
+    <button class="nav-item active" data-screen="home">🏠<span>Home</span></button>
+    <button class="nav-item" data-screen="newqc">📋<span>Inspection</span></button>
+    <button class="nav-item" data-screen="photos">📷<span>Photos</span></button>
+    <button class="nav-item" data-screen="reports">📊<span>Reports</span></button>
+    <button class="nav-item" data-screen="settings">⚙<span>Settings</span></button>
+  </nav>
+</div>
+
+<script src="js/config.js"></script>
+<script src="js/state.js"></script>
+<script src="js/googleAuth.js"></script>
+<script src="js/googleDrive.js"></script>
+<script src="js/googleSheets.js"></script>
+<script src="js/pdfImport.js"></script>
+<script src="js/pdfExport.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
+
