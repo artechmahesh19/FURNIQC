@@ -670,7 +670,7 @@ function jsonResponse(obj) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Run this function in Apps Script Editor to update headers & dashboard immediately
+// Run this function in Apps Script Editor to update headers, populate Drive Links & dashboard immediately
 // ─────────────────────────────────────────────────────────────
 function testScript() {
   var ss = getSpreadsheet();
@@ -678,19 +678,14 @@ function testScript() {
   ensureHeaderRow(sheet);
   migrateToV2(sheet);
   updateDashboard(ss);
-  Logger.log("FurniQc Sheet headers, migration and Dashboard updated successfully!");
+  Logger.log("FurniQc Sheet headers, Drive links for all rows, and Dashboard updated successfully!");
 }
 
 
 // ─────────────────────────────────────────────────────────────
-// MIGRATION: Fix old 24-column rows to 28-column format
-//
-// Old format (24 cols):
-//   A-L: Basic info (12)  M-T: 8 QC params  U:Remark  V:QC Status  W:RespDept  X:QCRound
-//
-// New format (28 cols):
-//   A-L: Basic info (12)  M-T: 8 QC params  U:Panel  V:Polish  W:Solid  X:Upholstery
-//   Y:Remark  Z:QC Status  AA:RespDept  AB:QCRound
+// MIGRATION & DRIVE LINK POPULATION:
+// 1. Converts old 24-column rows to 29-column format (adds 4 depts + Drive Link)
+// 2. Automatically generates and fills Google Drive hyperlinks in Column AC for EVERY row
 // ─────────────────────────────────────────────────────────────
 function migrateToV2(sheet) {
   if (!sheet) {
@@ -701,15 +696,15 @@ function migrateToV2(sheet) {
 
   var lastRow = sheet.getLastRow();
   var migratedCount = 0;
+  var driveLinkCount = 0;
 
   for (var r = 2; r <= lastRow; r++) {
-    var rowData = sheet.getRange(r, 1, 1, 28).getValues()[0];
+    // Read first 29 columns of row
+    var rowRange = sheet.getRange(r, 1, 1, 29);
+    var rowData  = rowRange.getValues()[0];
 
-    // In OLD 24-col format:
-    // rowData[20] = Remark (Col U)
-    // rowData[21] = QC Status ("QC APPROVED" or "QC REJECTED") (Col V)
-    // rowData[22] = Responsible Dept (Col W)
-    // rowData[23] = QC Round ("Fresh QC" or "Re-QC") (Col X)
+    var artNo = (rowData[7] || "").toString().trim(); // Col H: Job Card No / Art No
+    var drNo  = (rowData[8] || "").toString().trim(); // Col I: Dr No
 
     var valAtCol22 = (rowData[21] || "").toString().trim().toUpperCase(); // Col V
     var valAtCol24 = (rowData[23] || "").toString().trim().toUpperCase(); // Col X
@@ -718,6 +713,12 @@ function migrateToV2(sheet) {
                       valAtCol22.indexOf("QC REJECTED") !== -1 ||
                       valAtCol24 === "FRESH QC" ||
                       valAtCol24 === "RE-QC";
+
+    // Compute Drive link formula for this item
+    var searchKeywords = [drNo, artNo].filter(Boolean).join(" ");
+    var searchUrl = "https://drive.google.com/drive/u/0/search?q=" + encodeURIComponent(searchKeywords || "FurniQc");
+    var driveLabel = drNo ? ("📁 Drive: " + drNo) : ("📁 Drive: " + (artNo || "Photos"));
+    var driveFormula = '=HYPERLINK("' + searchUrl + '", "' + driveLabel + '")';
 
     if (isOldFormat) {
       var oldRemark   = rowData[20]; // index 20 (Col U)
@@ -747,16 +748,22 @@ function migrateToV2(sheet) {
       newRow[25] = oldStatus || (panelState === "REJECTED" || polishState === "REJECTED" || solidState === "REJECTED" || uphState === "REJECTED" ? "QC REJECTED" : "QC APPROVED"); // Col Z: QC Status
       newRow[26] = oldRespDept || "-";   // Col AA: Responsible Dept
       newRow[27] = oldQcRound || "Fresh QC"; // Col AB: QC Round
+      newRow[28] = driveFormula;         // Col AC: Product Photos Drive Link
 
-      sheet.getRange(r, 1, 1, 28).setValues([newRow]);
+      sheet.getRange(r, 1, 1, 29).setValues([newRow]);
       migratedCount++;
+    } else {
+      // Check if Column AC (col 29 / index 28) is empty or missing formula
+      var curColAcVal = (rowData[28] || "").toString().trim();
+      if (!curColAcVal || curColAcVal === "" || curColAcVal === "-") {
+        sheet.getRange(r, 29).setValue(driveFormula);
+        driveLinkCount++;
+      }
     }
   }
 
-  if (migratedCount > 0) {
-    formatNewRows(sheet, 2, lastRow);
-    Logger.log("Migrated " + migratedCount + " old rows to 28-column format.");
-  }
+  formatNewRows(sheet, 2, lastRow);
+  Logger.log("Migration finished: " + migratedCount + " old rows restructured, " + driveLinkCount + " drive links populated.");
 }
 
 
