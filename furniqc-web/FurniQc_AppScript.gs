@@ -118,7 +118,6 @@ function saveInspection(data) {
   var sheet = getOrCreateSheet(ss, QC_LOG_SHEET);
 
   ensureHeaderRow(sheet);
-  migrateToV2(sheet);
 
   var lastRow = sheet.getLastRow();
   var srNo    = lastRow;
@@ -132,9 +131,17 @@ function saveInspection(data) {
     var row = buildQcRow(srNo, inspection, project, item);
     sheet.appendRow(row);
     rowsAdded++;
+
+    // Guarantee Column AC (Col 29) formula is explicitly set
+    var thisRow = sheet.getLastRow();
+    var folderUrl = getDrFolderUrl(item.drNo || drNo, project.artNo, inspection.qcDate || getTodayDate(), inspection.qcType || "Fresh QC");
+    if (folderUrl) {
+      sheet.getRange(thisRow, 29).setValue('=HYPERLINK("' + folderUrl + '", "📁 Open ' + (item.drNo || drNo) + ' Folder")');
+    }
   });
 
-  formatNewRows(sheet, lastRow + 1, lastRow + rowsAdded);
+  migrateToV2(sheet);
+  formatNewRows(sheet, lastRow + 1, sheet.getLastRow());
   updateDashboard(ss);
 
   return jsonResponse({
