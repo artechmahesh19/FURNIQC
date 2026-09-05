@@ -658,6 +658,34 @@ function getDrFolder(drNo, artNo, qcDate, qcType) {
 
 function getDrFolderUrl(drNo, artNo, qcDate, qcType) {
   try {
+    drNo  = (drNo || "").toString().trim();
+    artNo = (artNo || "").toString().trim();
+
+    // 1. Direct Search: Check if a folder named drNo (e.g. "DR-557") already exists in Drive
+    if (drNo) {
+      var drFolders = DriveApp.getFoldersByName(drNo);
+      if (drFolders.hasNext()) {
+        return drFolders.next().getUrl();
+      }
+    }
+
+    // 2. Check if a folder named artNo (e.g. "ART-130") exists and search inside it
+    if (artNo) {
+      var artFolders = DriveApp.getFoldersByName(artNo);
+      if (artFolders.hasNext()) {
+        var af = artFolders.next();
+        if (drNo) {
+          var subDr = af.getFoldersByName(drNo);
+          if (subDr.hasNext()) {
+            return subDr.next().getUrl();
+          }
+          return findOrCreateFolder(drNo, af).getUrl();
+        }
+        return af.getUrl();
+      }
+    }
+
+    // 3. Create or find in standard hierarchy: FurniQc / Month / Round / Art_Date / DR
     var folder = getDrFolder(drNo, artNo, qcDate, qcType);
     return folder ? folder.getUrl() : "";
   } catch (err) {
