@@ -531,6 +531,28 @@ async function recaptureExisting(drNo, photoId, file) {
   }
 }
 
+// ---------------------------------------------------------------
+// CIRCULAR PERCENTAGE UPLOAD MODAL
+// ---------------------------------------------------------------
+function showUploadProgress(pct, statusText) {
+  const modal = $("#upload-progress-modal");
+  if (!modal) return;
+  modal.classList.add("active");
+  const stroke = $("#progress-ring-stroke");
+  const label = $("#progress-ring-label");
+  const text = $("#progress-ring-status-text");
+  const circumference = 314.159; // 2 * pi * 50
+  const offset = circumference - (Math.min(100, Math.max(0, pct)) / 100) * circumference;
+  if (stroke) stroke.style.strokeDashoffset = offset;
+  if (label) label.textContent = `${Math.round(pct)}%`;
+  if (text && statusText) text.textContent = statusText;
+}
+
+function hideUploadProgress() {
+  const modal = $("#upload-progress-modal");
+  if (modal) modal.classList.remove("active");
+}
+
 async function saveCurrentInspection() {
   const insp = finalizeInspection(currentInspectionId);
   const project = APP_STATE.artProjects[insp.artNo] || { artNo: insp.artNo, projectName: "Project" };
@@ -538,21 +560,33 @@ async function saveCurrentInspection() {
   const hasOAuth = typeof GoogleAuth !== "undefined" && GoogleAuth.isSignedIn();
   const score = getInspectionScore(insp);
 
+  showUploadProgress(15, "Initializing Cloud Upload...");
+
   if (hasAppsScript || hasOAuth) {
     try {
+      showUploadProgress(35, "Uploading DR Photos to Google Drive...");
       // Step 1: Batch backup all photos to Google Drive
       await GoogleDrive.backupInspectionPhotos(insp, project);
 
+      showUploadProgress(70, "Writing 29 Columns to Google Sheet...");
       // Step 2: Append QC report rows to Google Sheet with 4-department status & responsible department & Drive links
       await GoogleSheets.appendInspection(insp, project);
+
+      showUploadProgress(100, `✅ ${score.pctApproved}% QC Upload Completed!`);
+      await new Promise((r) => setTimeout(r, 900));
+      hideUploadProgress();
 
       const monthName = GoogleDrive.getMonthName ? GoogleDrive.getMonthName(insp.qcDate) : "Current Month";
       alert(`🎉 QC Inspection Saved Successfully!\n\n📊 QC Score: ${score.pctApproved}% Approved\n• ${score.approved} Approved · ${score.rejected} Rejected (${score.total} Total Items)\n• Google Sheet updated with 4 Departments & Drive Photo Links\n• Photos backed up to Google Drive:\n  FurniQc / ${monthName} / ${insp.qcType} / ${project.artNo}_${insp.qcDate}\n• Overall QC Status: ${insp.status.toUpperCase()}`);
     } catch (e) {
       console.error("Google sync error:", e);
+      hideUploadProgress();
       alert(`Inspection saved locally. Sync error: ${e.message || e}`);
     }
   } else {
+    showUploadProgress(100, `✅ Saved Locally (${score.pctApproved}%)`);
+    await new Promise((r) => setTimeout(r, 600));
+    hideUploadProgress();
     alert(`Inspection saved locally!\n\n📊 Score: ${score.pctApproved}% Approved (${score.approved}/${score.total} Passed)`);
   }
   updateSyncStatusBar();
@@ -628,43 +662,9 @@ function openLightboxDirect(url, title, artNo) {
 }
 
 // ---------------------------------------------------------------
-// REPORTS & CSV EXPORT
+// REPORTS SCREEN (CLEAN GROUPED REPORTS & PDF EXPORT)
 // ---------------------------------------------------------------
 function renderReports() {
-  const stats = getDashboardStats();
-  $("#dashboard-cards").innerHTML = CONFIG.DEPARTMENTS.map((dept) => {
-    const s = stats[dept];
-    return `
-      <div class="card" style="padding:12px 14px; margin-bottom:8px;">
-        <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:6px;">
-          <span style="font-weight:600;">${dept}</span>
-          <span style="color:var(--ok-text); font-weight:600;">${s.pctApproved}% Approved</span>
-        </div>
-        <div class="progress-bar-bg">
-          <div class="progress-bar-fill" style="width:${s.pctApproved}%; background:var(--ok-text);"></div>
-        </div>
-        <p style="font-size:11px; color:var(--text-secondary); margin:4px 0 0;">${s.approved} Approved · ${s.rejected} Rejected (${s.total} Total)</p>
-      </div>`;
-  }).join("");
-
-  // Render Top Rejection Reasons Chart
-  const { counts, totalRejections } = getRejectionReasonStats();
-  const reasonEntries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-
-  $("#rejection-reasons-chart").innerHTML = reasonEntries.map(([reason, count]) => {
-    const pct = totalRejections ? Math.round((count / totalRejections) * 100) : 0;
-    return `
-      <div style="margin-bottom:8px;">
-        <div style="display:flex; justify-content:space-between; font-size:11px; margin-bottom:3px;">
-          <span>${reason}</span>
-          <span style="font-weight:600; color:var(--rejected-text);">${count} (${pct}%)</span>
-        </div>
-        <div class="progress-bar-bg">
-          <div class="progress-bar-fill" style="width:${pct}%; background:var(--rejected-text);"></div>
-        </div>
-      </div>`;
-  }).join("") || `<p style="font-size:12px; color:var(--text-secondary);">No rejections recorded.</p>`;
-
   renderQcLogGroups();
 }
 
@@ -679,7 +679,7 @@ function renderQcLogGroups() {
 
   const artNos = Object.keys(groups);
   if (artNos.length === 0) {
-    $("#qc-log-groups").innerHTML = `<p style="font-size:12px; color:var(--text-secondary);">No QC logs available.</p>`;
+    $("#qc-log-groups").innerHTML = `<div class="card"><p style="font-size:12px; color:var(--text-secondary); text-align:center;">No QC reports found. Start a new inspection to view reports here.</p></div>`;
     return;
   }
 
@@ -694,46 +694,52 @@ function renderQcLogGroups() {
     .map((artNo) => renderArtGroupCard(artNo, groups[artNo]))
     .join("");
 
-  $("#qc-log-groups").innerHTML = html || `<p style="font-size:12px; color:var(--text-secondary);">No records match your search.</p>`;
+  $("#qc-log-groups").innerHTML = html || `<div class="card"><p style="font-size:12px; color:var(--text-secondary); text-align:center;">No records match "${query}".</p></div>`;
 
-  $all(".view-record-btn").forEach((el) =>
-    el.addEventListener("click", () => {
-      currentInspectionId = el.dataset.insp;
-      renderInspectionScreen();
-      showScreen("inspection");
-    })
-  );
+  bindReportActionEvents();
 }
 
 function renderArtGroupCard(artNo, inspections) {
   const project = APP_STATE.artProjects[artNo] || { projectName: "Furniture Project" };
+  let totalItems = 0;
   let rejectedCount = 0;
+
   inspections.forEach((insp) => {
     Object.values(insp.lineItems).forEach((item) => {
+      totalItems++;
       const isDeptRej = item.departments && Object.values(item.departments).some((d) => d && d.state === "Rejected");
       const isParamRej = item.parameters && Object.values(item.parameters).some((p) => p && p.state === "Rejected");
       if (isDeptRej || isParamRej) rejectedCount++;
     });
   });
 
+  const passedCount = totalItems - rejectedCount;
+  const pct = totalItems ? Math.round((passedCount / totalItems) * 100) : 100;
+
   const itemsHtml = inspections
     .flatMap((insp) =>
       Object.values(insp.lineItems).map((item) => {
-        const rejected = Object.values(item.parameters).some((p) => p.state === "Rejected") || (item.departments && Object.values(item.departments).some((d) => d.state === "Rejected"));
+        const rejected = Object.values(item.parameters || {}).some((p) => p.state === "Rejected") || (item.departments && Object.values(item.departments).some((d) => d.state === "Rejected"));
         return `
-          <div style="padding:8px 0; border-top:1px solid var(--border);">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div style="padding:10px 0; border-top:1px solid var(--border);">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start;">
               <div>
-                <p style="font-size:12px; font-weight:600; margin:0;">${item.drNo} · ${item.productName}</p>
-                <p style="font-size:11px; color:var(--text-secondary); margin:2px 0 0;">${item.size} · ${item.department} (${insp.qcType})</p>
+                <p style="font-size:13px; font-weight:600; margin:0;">
+                  <span class="badge badge-drno">${item.drNo}</span>
+                  <span class="badge badge-qty">Qty: ${item.qty}</span>
+                  <span class="badge" style="background:var(--surface-muted); color:var(--text-secondary);">${item.department}</span>
+                </p>
+                <p style="font-size:12px; font-weight:500; margin:4px 0 0;">${item.productName}</p>
+                <p style="font-size:11px; color:var(--text-secondary); margin:2px 0 0;">${item.size || "Standard Dimension"} · ${insp.qcType} (${insp.qcDate})</p>
               </div>
-              <span class="badge" style="background:${rejected ? "var(--rejected-bg)" : "var(--ok-bg)"}; color:${rejected ? "var(--rejected-text)" : "var(--ok-text)"}; font-size:10px;">
+              <span class="badge" style="background:${rejected ? "var(--rejected-bg)" : "var(--ok-bg)"}; color:${rejected ? "var(--rejected-text)" : "var(--ok-text)"}; font-size:10px; font-weight:700;">
                 ${rejected ? "REJECTED" : "APPROVED"}
               </span>
             </div>
-            <div class="btn-row" style="margin-top:8px;">
-              <button class="btn btn-secondary view-record-btn" data-insp="${insp.id}" style="height:32px; font-size:11px;">👁 View</button>
-              <button class="btn btn-secondary pdf-record-btn" data-insp="${insp.id}" data-drno="${item.drNo}" style="height:32px; font-size:11px;">⬇ Dr No PDF</button>
+            <div style="display:flex; gap:6px; margin-top:8px;">
+              <button class="btn btn-secondary view-record-btn" data-insp="${insp.id}" style="flex:1; height:32px; font-size:11px;">👁 View Inspection</button>
+              <button class="btn btn-secondary pdf-record-btn" data-insp="${insp.id}" data-drno="${item.drNo}" style="flex:1; height:32px; font-size:11px;">⬇ Dr No PDF</button>
+              <button class="btn btn-danger delete-insp-btn" data-insp="${insp.id}" data-drno="${item.drNo}" style="height:32px; padding:0 8px; font-size:11px;" title="Delete this QC inspection">🗑 Delete</button>
             </div>
           </div>`;
       })
@@ -741,22 +747,69 @@ function renderArtGroupCard(artNo, inspections) {
     .join("");
 
   return `
-    <div class="card" style="padding:0; overflow:hidden; margin-bottom:12px;">
+    <div class="card" style="padding:0; overflow:hidden; margin-bottom:14px; border:1px solid var(--border-strong);">
       <div style="background:var(--surface-muted); padding:12px 14px; display:flex; justify-content:space-between; align-items:center;">
         <div>
-          <p style="font-size:14px; font-weight:600; margin:0;">${artNo}</p>
-          <p style="font-size:11px; color:var(--text-secondary); margin:2px 0 0;">${project.projectName}</p>
+          <p style="font-size:14px; font-weight:700; margin:0;">${artNo} — ${project.projectName}</p>
+          <p style="font-size:11px; color:var(--text-secondary); margin:2px 0 0;">${inspections.length} Inspection(s) · ${totalItems} Total Items</p>
         </div>
-        <span style="font-size:11px; color:${rejectedCount ? "var(--rejected-text)" : "var(--ok-text)"}; font-weight:600;">
-          ${rejectedCount ? rejectedCount + " Rejected" : "All Approved"}
+        <span class="badge" style="background:${pct === 100 ? "#065f46" : pct >= 60 ? "#78350f" : "#7f1d1d"}; color:#fff; font-size:11px; font-weight:700;">
+          ${pct}% Approved
         </span>
       </div>
       <div style="padding:8px 14px;">${itemsHtml}</div>
-      <div style="padding:10px 14px; border-top:1px solid var(--border);">
-        <button class="btn btn-secondary" style="width:100%; height:36px; font-size:12px;" onclick="downloadArtGroupPdf('${artNo}')">⬇ Export Full ${artNo} QC Report PDF</button>
+      <div style="padding:10px 14px; border-top:1px solid var(--border); display:flex; gap:8px; background:#18181f;">
+        <button class="btn btn-primary" style="flex:1; height:36px; font-size:12px;" onclick="downloadArtGroupPdf('${artNo}')">⬇ Export Full ${artNo} Report PDF</button>
+        <button class="btn btn-danger" style="height:36px; padding:0 12px; font-size:12px;" onclick="deleteArtGroupRecord('${artNo}')" title="Delete entire Art Group">🗑 Delete Art</button>
       </div>
     </div>`;
 }
+
+function bindReportActionEvents() {
+  $all(".view-record-btn").forEach((el) =>
+    el.addEventListener("click", () => {
+      currentInspectionId = el.dataset.insp;
+      renderInspectionScreen();
+      showScreen("inspection");
+    })
+  );
+
+  $all(".pdf-record-btn").forEach((el) =>
+    el.addEventListener("click", () => {
+      const insp = APP_STATE.inspections[el.dataset.insp];
+      const project = APP_STATE.artProjects[insp.artNo];
+      PdfExport.exportSingleDrNoPdf(project, insp, el.dataset.drno);
+    })
+  );
+
+  $all(".delete-insp-btn").forEach((el) =>
+    el.addEventListener("click", () => {
+      const inspId = el.dataset.insp;
+      if (confirm(`Delete this QC inspection record?`)) {
+        deleteInspection(inspId);
+        renderReports();
+        renderHome();
+      }
+    })
+  );
+}
+
+function deleteArtGroupRecord(artNo) {
+  if (confirm(`Delete all QC inspection records for ${artNo}?`)) {
+    // Delete all inspections for this art
+    Object.keys(APP_STATE.inspections).forEach((id) => {
+      if (APP_STATE.inspections[id]?.artNo === artNo) {
+        delete APP_STATE.inspections[id];
+      }
+    });
+    delete APP_STATE.artProjects[artNo];
+    saveState();
+    renderReports();
+    renderHome();
+    alert(`Deleted ${artNo} records.`);
+  }
+}
+
 
 function downloadArtGroupPdf(artNo) {
   const project = APP_STATE.artProjects[artNo];

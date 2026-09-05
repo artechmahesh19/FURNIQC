@@ -10,14 +10,16 @@
 // Google Drive Folder Hierarchy:
 //   FurniQc / {Month} / {Fresh QC | Re-QC} / {Art No}_{QC Date} / {Dr No} / photo_001.jpg
 //
-// Google Sheet Columns (28 Columns - Full 8 QC Parameters + 4 Department Tags):
+// Google Sheet Columns (29 Columns - Full 8 QC Parameters + 4 Department Tags + Drive Link):
 //   A: Sr No | B: Date | C: Month | D: Client | E: Project Name | F: Po No
 //   G: Department | H: Job Card No | I: Dr No | J: Product Name | K: Qty | L: Size
 //   M: Outer/Polish/veneer/Pu/Metal | N: Edgeband | O: GVT/Leg | P: Glass/Lock
 //   Q: Design As Per Drawing | R: Handle/knob/Profile | S: Fabric | T: Metal
 //   U: Panel | V: Polish | W: Solid | X: Upholstery
 //   Y: Remark | Z: QC APPROVED OR REJECT | AA: Responsible Department | AB: QC Round
+//   AC: Product Photos (Google Drive Link)
 // ============================================================
+
 
 // ─── CONFIGURATION ───────────────────────────────────────────
 var SHEET_ID = "1tYR0aFScB0bg--vmtQIhPlZTddNX8a1CUBWf7gsGZbU";

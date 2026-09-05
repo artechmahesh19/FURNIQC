@@ -179,25 +179,11 @@
   <section id="screen-reports" class="screen">
     <div class="header">
       <div class="header-left">
-        <h2>📊 Reports & Analytics</h2>
+        <h2>📋 QC Reports</h2>
       </div>
       <button class="btn btn-secondary" id="export-csv-btn" style="height:32px; padding:0 10px; font-size:11px;">📥 CSV Export</button>
     </div>
     <div style="padding:16px 18px;">
-      <!-- Department Breakdown Cards -->
-      <p style="font-size:12px; color:var(--text-secondary); margin:0 0 8px; font-weight:600;">Department Approval Stats</p>
-      <div id="dashboard-cards"></div>
-
-      <!-- Top Rejection Reasons Analytics -->
-      <div class="card" style="margin-top:12px;">
-        <p style="font-size:13px; font-weight:600; margin:0 0 8px;">⚠️ Top Rejection Reasons</p>
-        <div id="rejection-reasons-chart"></div>
-      </div>
-
-      <!-- QC Log Filter & List -->
-      <div style="display:flex; justify-content:space-between; align-items:center; margin:16px 0 8px;">
-        <p style="font-size:12px; color:var(--text-secondary); margin:0; font-weight:600;">QC Log Records (Grouped Art Wise)</p>
-      </div>
       <input id="reports-search-input" placeholder="🔍 Search Art No, Dr No, or Project..." style="margin-bottom:12px;" />
       <div id="qc-log-groups"></div>
     </div>
@@ -245,6 +231,32 @@
       </div>
     </div>
   </section>
+
+  <!-- ============ MODALS ============ -->
+
+  <!-- CIRCULAR PERCENTAGE UPLOAD PROGRESS MODAL -->
+  <div class="modal-overlay" id="upload-progress-modal">
+    <div class="modal-content" style="max-width:300px; text-align:center; background:#18181f; border:1px solid #2e2e38; padding:24px 20px; border-radius:20px;">
+      <div class="progress-ring-container">
+        <svg class="progress-ring-svg" viewBox="0 0 120 120">
+          <defs>
+            <linearGradient id="progress-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#3b82f6"/>
+              <stop offset="35%" stop-color="#8b5cf6"/>
+              <stop offset="70%" stop-color="#ec4899"/>
+              <stop offset="90%" stop-color="#f59e0b"/>
+              <stop offset="100%" stop-color="#10b981"/>
+            </linearGradient>
+          </defs>
+          <circle class="progress-ring-circle-bg" cx="60" cy="60" r="50"/>
+          <circle class="progress-ring-circle" id="progress-ring-stroke" cx="60" cy="60" r="50" stroke-dasharray="314.159" stroke-dashoffset="314.159"/>
+          <text class="progress-ring-text" id="progress-ring-label" x="60" y="60" transform="rotate(90 60 60)">0%</text>
+        </svg>
+        <p class="progress-ring-status" id="progress-ring-status-text">Loading...</p>
+      </div>
+    </div>
+  </div>
+
 
 
   <!-- ============ MODALS ============ -->
