@@ -162,14 +162,7 @@ function uploadPhoto(data) {
     return jsonResponse({ success: false, error: "No base64Data provided" });
   }
 
-  var monthName     = getMonthName(qcDate);
-  var artDateName   = artNo + "_" + qcDate;
-
-  var rootFolder    = findOrCreateFolder(DRIVE_ROOT_FOLDER, DriveApp.getRootFolder());
-  var monthFolder   = findOrCreateFolder(monthName,   rootFolder);
-  var roundFolder   = findOrCreateFolder(qcType,      monthFolder);
-  var artDateFolder = findOrCreateFolder(artDateName, roundFolder);
-  var drFolder      = findOrCreateFolder(drNo,        artDateFolder);
+  var drFolder = getDrFolder(drNo, artNo, qcDate, qcType);
 
   var blob = Utilities.newBlob(
     Utilities.base64Decode(b64.replace(/^data:[^;]+;base64,/, "")),
@@ -179,12 +172,15 @@ function uploadPhoto(data) {
 
   var file = drFolder.createFile(blob);
 
-  var folderPath = DRIVE_ROOT_FOLDER + " / " + monthName + " / " + qcType + " / " + artDateName + " / " + drNo;
+  var monthName     = getMonthName(qcDate) || "Current";
+  var artDateName   = artNo + "_" + qcDate;
+  var folderPath    = DRIVE_ROOT_FOLDER + " / " + monthName + " / " + qcType + " / " + artDateName + " / " + drNo;
 
   return jsonResponse({
     success: true,
     fileId: file.getId(),
     webViewLink: file.getUrl(),
+    folderUrl: drFolder.getUrl(),
     folderPath: folderPath,
     fileName: fileName
   });
@@ -304,20 +300,11 @@ function buildQcRow(srNo, inspection, project, item) {
   var qcStatus        = overallRejected ? "QC REJECTED" : "QC APPROVED";
   var responsibleDept = rejectedDepts.length > 0 ? rejectedDepts.join(", ") : "-";
 
-  // 3. Generate Direct Google Drive Photo Hyperlink for this DR No
-  var photoHyperlink = "-";
-  var photos = item.photos || [];
-  if (photos.length > 0) {
-    var firstPhoto = photos[0];
-    var driveUrl = firstPhoto.webViewLink || (firstPhoto.driveFileId ? ("https://drive.google.com/file/d/" + firstPhoto.driveFileId + "/view") : "");
-    if (!driveUrl) {
-      driveUrl = "https://drive.google.com/drive/u/0/search?q=" + encodeURIComponent((item.drNo || "") + " " + (project.artNo || ""));
-    }
-    photoHyperlink = '=HYPERLINK("' + driveUrl + '", "📁 View ' + (item.drNo || "Item") + ' Photos (' + photos.length + ')")';
-  } else {
-    var searchUrl = "https://drive.google.com/drive/u/0/search?q=" + encodeURIComponent((item.drNo || "") + " " + (project.artNo || ""));
-    photoHyperlink = '=HYPERLINK("' + searchUrl + '", "📁 Drive Folder: ' + (item.drNo || "") + '")';
-  }
+  // 3. Generate Direct Google Drive DR Folder Hyperlink for this DR No
+  var folderUrl = getDrFolderUrl(item.drNo, project.artNo, qcDate, qcType);
+  var photoHyperlink = folderUrl ?
+    ('=HYPERLINK("' + folderUrl + '", "📁 ' + (item.drNo || "DR") + ' Folder")') :
+    "-";
 
   return [
     srNo,                                // A: Sr No
@@ -642,6 +629,43 @@ function findOrCreateFolder(name, parent) {
   return parent.createFolder(name);
 }
 
+function getDrFolder(drNo, artNo, qcDate, qcType) {
+  artNo  = (artNo || "ART-UNKNOWN").toString().trim();
+  drNo   = (drNo  || "DR-UNKNOWN").toString().trim();
+  qcType = (qcType || "Fresh QC").toString().trim();
+
+  // Normalize qcDate to yyyy-MM-dd string
+  var qcDateStr = "";
+  if (qcDate instanceof Date) {
+    qcDateStr = Utilities.formatDate(qcDate, Session.getScriptTimeZone(), "yyyy-MM-dd");
+  } else if (typeof qcDate === "string" && qcDate.trim()) {
+    qcDateStr = qcDate.trim();
+  } else {
+    qcDateStr = getTodayDate();
+  }
+
+  var monthName     = getMonthName(qcDateStr) || "Current";
+  var artDateName   = artNo + "_" + qcDateStr;
+
+  var rootFolder    = findOrCreateFolder(DRIVE_ROOT_FOLDER, DriveApp.getRootFolder());
+  var monthFolder   = findOrCreateFolder(monthName,   rootFolder);
+  var roundFolder   = findOrCreateFolder(qcType,      monthFolder);
+  var artDateFolder = findOrCreateFolder(artDateName, roundFolder);
+  var drFolder      = findOrCreateFolder(drNo,        artDateFolder);
+
+  return drFolder;
+}
+
+function getDrFolderUrl(drNo, artNo, qcDate, qcType) {
+  try {
+    var folder = getDrFolder(drNo, artNo, qcDate, qcType);
+    return folder ? folder.getUrl() : "";
+  } catch (err) {
+    Logger.log("getDrFolderUrl error: " + err);
+    return "";
+  }
+}
+
 function getOrCreateSheet(ss, name) {
   var sheet = ss.getSheetByName(name);
   if (!sheet) {
@@ -678,14 +702,14 @@ function testScript() {
   ensureHeaderRow(sheet);
   migrateToV2(sheet);
   updateDashboard(ss);
-  Logger.log("FurniQc Sheet headers, Drive links for all rows, and Dashboard updated successfully!");
+  Logger.log("FurniQc Sheet headers, Direct DR Folder Drive links for all rows, and Dashboard updated successfully!");
 }
 
 
 // ─────────────────────────────────────────────────────────────
-// MIGRATION & DRIVE LINK POPULATION:
+// MIGRATION & DIRECT DR FOLDER DRIVE LINK POPULATION:
 // 1. Converts old 24-column rows to 29-column format (adds 4 depts + Drive Link)
-// 2. Automatically generates and fills Google Drive hyperlinks in Column AC for EVERY row
+// 2. Generates and fills direct Google Drive DR folder URLs in Column AC for EVERY row
 // ─────────────────────────────────────────────────────────────
 function migrateToV2(sheet) {
   if (!sheet) {
@@ -703,8 +727,17 @@ function migrateToV2(sheet) {
     var rowRange = sheet.getRange(r, 1, 1, 29);
     var rowData  = rowRange.getValues()[0];
 
+    var qcDateVal = rowData[1];
+    var qcDateStr = "";
+    if (qcDateVal instanceof Date) {
+      qcDateStr = Utilities.formatDate(qcDateVal, Session.getScriptTimeZone(), "yyyy-MM-dd");
+    } else {
+      qcDateStr = (qcDateVal || getTodayDate()).toString().trim();
+    }
+
     var artNo = (rowData[7] || "").toString().trim(); // Col H: Job Card No / Art No
     var drNo  = (rowData[8] || "").toString().trim(); // Col I: Dr No
+    var round = (rowData[27] || rowData[23] || "Fresh QC").toString().trim(); // Col AB / X
 
     var valAtCol22 = (rowData[21] || "").toString().trim().toUpperCase(); // Col V
     var valAtCol24 = (rowData[23] || "").toString().trim().toUpperCase(); // Col X
@@ -714,11 +747,10 @@ function migrateToV2(sheet) {
                       valAtCol24 === "FRESH QC" ||
                       valAtCol24 === "RE-QC";
 
-    // Compute Drive link formula for this item
-    var searchKeywords = [drNo, artNo].filter(Boolean).join(" ");
-    var searchUrl = "https://drive.google.com/drive/u/0/search?q=" + encodeURIComponent(searchKeywords || "FurniQc");
-    var driveLabel = drNo ? ("📁 Drive: " + drNo) : ("📁 Drive: " + (artNo || "Photos"));
-    var driveFormula = '=HYPERLINK("' + searchUrl + '", "' + driveLabel + '")';
+    // Direct Google Drive Folder URL (e.g. https://drive.google.com/drive/folders/...)
+    var folderUrl = getDrFolderUrl(drNo, artNo, qcDateStr, round);
+    var driveLabel = drNo ? ("📁 " + drNo + " Folder") : ("📁 " + (artNo || "Drive") + " Folder");
+    var driveFormula = folderUrl ? ('=HYPERLINK("' + folderUrl + '", "' + driveLabel + '")') : "-";
 
     if (isOldFormat) {
       var oldRemark   = rowData[20]; // index 20 (Col U)
@@ -748,14 +780,14 @@ function migrateToV2(sheet) {
       newRow[25] = oldStatus || (panelState === "REJECTED" || polishState === "REJECTED" || solidState === "REJECTED" || uphState === "REJECTED" ? "QC REJECTED" : "QC APPROVED"); // Col Z: QC Status
       newRow[26] = oldRespDept || "-";   // Col AA: Responsible Dept
       newRow[27] = oldQcRound || "Fresh QC"; // Col AB: QC Round
-      newRow[28] = driveFormula;         // Col AC: Product Photos Drive Link
+      newRow[28] = driveFormula;         // Col AC: Direct Drive Folder URL
 
       sheet.getRange(r, 1, 1, 29).setValues([newRow]);
       migratedCount++;
     } else {
-      // Check if Column AC (col 29 / index 28) is empty or missing formula
+      // Overwrite/fill Column AC with the direct folder URL
       var curColAcVal = (rowData[28] || "").toString().trim();
-      if (!curColAcVal || curColAcVal === "" || curColAcVal === "-") {
+      if (!curColAcVal || curColAcVal === "" || curColAcVal === "-" || curColAcVal.indexOf("search?q=") !== -1) {
         sheet.getRange(r, 29).setValue(driveFormula);
         driveLinkCount++;
       }
@@ -763,7 +795,7 @@ function migrateToV2(sheet) {
   }
 
   formatNewRows(sheet, 2, lastRow);
-  Logger.log("Migration finished: " + migratedCount + " old rows restructured, " + driveLinkCount + " drive links populated.");
+  Logger.log("Migration finished: " + migratedCount + " old rows restructured, " + driveLinkCount + " direct Drive folder links populated.");
 }
 
 
