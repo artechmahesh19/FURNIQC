@@ -303,7 +303,7 @@ function buildQcRow(srNo, inspection, project, item) {
   // 3. Generate Direct Google Drive DR Folder Hyperlink for this DR No
   var folderUrl = getDrFolderUrl(item.drNo, project.artNo, qcDate, qcType);
   var photoHyperlink = folderUrl ?
-    ('=HYPERLINK("' + folderUrl + '", "📁 ' + (item.drNo || "DR") + ' Folder")') :
+    ('=HYPERLINK("' + folderUrl + '", "📁 Open ' + (item.drNo || "DR") + ' Folder")') :
     "-";
 
   return [
@@ -777,7 +777,7 @@ function migrateToV2(sheet) {
 
     // Direct Google Drive Folder URL (e.g. https://drive.google.com/drive/folders/...)
     var folderUrl = getDrFolderUrl(drNo, artNo, qcDateStr, round);
-    var driveLabel = drNo ? ("📁 " + drNo + " Folder") : ("📁 " + (artNo || "Drive") + " Folder");
+    var driveLabel = drNo ? ("📁 Open " + drNo + " Folder") : ("📁 Open " + (artNo || "Drive") + " Folder");
     var driveFormula = folderUrl ? ('=HYPERLINK("' + folderUrl + '", "' + driveLabel + '")') : "-";
 
     if (isOldFormat) {
@@ -813,12 +813,9 @@ function migrateToV2(sheet) {
       sheet.getRange(r, 1, 1, 29).setValues([newRow]);
       migratedCount++;
     } else {
-      // Overwrite/fill Column AC with the direct folder URL
-      var curColAcVal = (rowData[28] || "").toString().trim();
-      if (!curColAcVal || curColAcVal === "" || curColAcVal === "-" || curColAcVal.indexOf("search?q=") !== -1) {
-        sheet.getRange(r, 29).setValue(driveFormula);
-        driveLinkCount++;
-      }
+      // Unconditionally overwrite Column AC with the direct folder URL
+      sheet.getRange(r, 29).setValue(driveFormula);
+      driveLinkCount++;
     }
   }
 
